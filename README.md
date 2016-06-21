@@ -1,39 +1,45 @@
 GIT changelog
 =============
 
-A shell command to generate CHANGELOG from a GIT history.
+A shell command to generate a basic changes log from a GIT history. The changes are grouped between each
+tag by default. The result SHOULD NOT be used "as is" in a changes log file but as a basis to work on:
+you may want to re-arrange logs by types such as 'fixes', 'deprecated' etc, to add some notes about 
+your project usages...
 
 Usage
 -----
 
 Usage of the command from a terminal:
 
-    usage:          ./git-changelog.sh <arg>
+    usage:          ./git-changelog.sh <type> [filename=NULL]
 
-    with <arg> in:
-                    'all'        : get the full repository changelog
-                    'tag1..tag2' : get a changelog between tag1 and tag2 (tag1 < tag2)
-                    'hash'       : get a single commit changelog message
-                    'init'       : get the full repository initial changelog (when no tag is available yet)
+    arguments:
+        -   <type> in:
+                'all'        : get the full repository changes log
+                'init'       : get the full repository initial changes log (no tag is used)
+                'tag1..tag2' : get the changes log between tag1 and tag2 (tag1 < tag2)
+                'hash'       : get a single commit change log message
+        -   <filename> usage:
+                if not set (default) result is written to STDOUT
+                is set with types 'all' or 'init', result is written to a file which is opened with EDITOR
 
 Generated rendering:
 
-    # CHANGELOG for remote repository git@github.com:e-picas/git-changelog.git
+    # Change log for remote repository <http://github.com/e-picas/git-changelog.git>
     
     * (upcoming release)
     
-        * be2f51e - Initial commit (picas)
+        * 0405aac - new environment settings (@picas)
     
     * v1.1.2 (2016-06-12 - 98ed75f)
     
-        * 35a83ad - preparing version 1.1.2 Bower & Node ready (picas)
-        * 27de223 - fix PHP bootstrapper (picas)
+        * 35a83ad - preparing version 1.1.2 Bower & Node ready (@picas)
+        * 27de223 - fix #1: PHP bootstrapper (@picas)
     
     * v1.1.1 (2016-06-12 - 4910542)
     
-        * 465f92f - preparing version 1.1.1 (#nochangelog) (picas)
-        * 0405aac - new environment settings (picas)
-        * ea73906 - review of documentations & ignored paths (picas)
+        * ea73906 - review of documentations & ignored paths (@picas)
+        * be2f51e - Initial commit (@picas)
 
 Installation
 ------------
