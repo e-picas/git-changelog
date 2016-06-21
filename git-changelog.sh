@@ -30,6 +30,7 @@ declare MESSAGE_IGNORE='#no-changelog'
 declare CHANGELOG_TITLE='# Change log for remote repository <%s>'
 declare HEAD_HEADER='* (upcoming release)'
 declare TAG_HEADER='* %(tag) (%(taggerdate:short) - %%s)'
+declare TAG_HEADER_NOTORIGIN='    * %(tag) (%(taggerdate:short) - %%s - from remote %%s)'
 declare COMMIT_LOG='    * %h - %s (@%cN)'
 
 # throw an error
@@ -87,8 +88,16 @@ repo_remote() {
 # tag_title TAG_REF
 tag_title() {
     local TAGREF=$(tag_header "${1}")
-    local tmp=$(git --no-pager for-each-ref --sort='-taggerdate' --format="$TAG_HEADER" 'refs/tags' | grep " ${1} ")
-    printf "$tmp" "$TAGREF"
+    local isorigin=$(git branch -r --contains "$TAGREF" | wc -l)
+    if [ $isorigin -eq 2 ]; then
+        local tmp=$(git --no-pager for-each-ref --sort='-taggerdate' --format="$TAG_HEADER" 'refs/tags' | grep " ${1} ")
+        printf "$tmp" "$TAGREF"
+    else
+        local tmp=$(git --no-pager for-each-ref --sort='-taggerdate' --format="$TAG_HEADER_NOTORIGIN" 'refs/tags' | grep " ${1} ")
+        local remote=$(git branch -r --contains "$TAGREF" | sed -n 3p)
+        printf "$tmp" "$TAGREF" "$remote"
+    fi
+
 }
 
 # tag_header TAG_REF
