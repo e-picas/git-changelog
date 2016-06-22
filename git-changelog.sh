@@ -16,21 +16,37 @@
 #       git-changelog.sh all
 #       git-changelog.sh hash
 #       git-changelog.sh TAG1..TAG2
-#       git-changelog.sh all CHANGELOG.md
-#       git-changelog.sh ... > CHANGELOG
+#       git-changelog.sh all
+#       git-changelog.sh --file=CHANGELOG.md ...
 #
+
+# abort script at first command with a non-zero status
 set -e
+## for dev usage: debug commands before to execute them
+#set -x
+## for dev usage: print shell input lines as they are read
+#set -v
 
 # current version
-declare SCRIPT_VERSION='0.1.0'
-declare DEV_DEBUG=false
+declare -r SCRIPT_VERSION='0.1.0'
+declare -r SCRIPT_NAME='GIT-changelog'
+declare -r SCRIPT_SOURCES='http://github.com/e-picas/git-changelog'
+declare -r SCRIPT_LICENSE='MIT license'
+declare -r CMD_PROG="$(basename "$0")"
+declare -r short_opts='qvx'
+declare -r long_opts='help,version,quiet,verbose,debug,file:,mask-title:,mask-header-upcoming:,mask-header-tag:,mask-commit:,tag-ignore:'
+
+declare DEBUG=false
+declare QUIET=false
+declare VERBOSE=false
+declare TARGET_FILENAME=''
 
 # variables
-declare MESSAGE_IGNORE='#no-changelog'
-declare CHANGELOG_TITLE='# Change log for remote repository <%s>'
-declare HEAD_HEADER='* (upcoming release)'
-declare TAG_HEADER='* %(tag) (%(taggerdate:short) - %%s)'
-declare COMMIT_LOG='    * %h - %s (@%cN)'
+declare TAGNAME_IGNORE='#no-changelog'
+declare MASK_GLOBAL_TITLE='# Change log for remote repository <%s>'
+declare MASK_HEADER_UPCOMING='* (upcoming release)'
+declare MASK_HEADER_TAG='* %(tag) (%(taggerdate:short) - %%s)'
+declare MASK_COMMIT_LOG='    * %h - %s (@%cN)'
 
 # throw an error
 error() {
@@ -41,27 +57,29 @@ error() {
     exit "${2:-1}"
 }
 
+# echo to SDTERR in VERBOSE mode
+verbose_echo() {
+    $VERBOSE && echo "$*" >&2;
+}
+
+# echo to SDTERR in DEBUG mode
+debug_echo() {
+    $DEBUG && echo "$*" >&2;
+}
+
 # usage string
 usage() {
     cat <<MESSAGE
-usage:          $0 <type> [filename=NULL]
-                $0 [-h|-V|--help|--version]
-
-arguments:
-    - <type> in:
-        'all'        : get the full repository changes log
-        'init'       : get the full repository initial changes log (no tag is used)
-        'tag1..tag2' : get the changes log between tag1 and tag2 (tag1 < tag2)
-        'hash'       : get a single commit change log message
-    - <filename> usage:
-        if not set (default) result is written to STDOUT
-        is set with types 'all' or 'init', result is written to a file which is opened with EDITOR
+usage: $CMD_PROG [--help] [--version] [-v | --verbose] [-q | --quiet]
+            [--file=<path>] [--mask-title=<mask>] [--tag-ignore=<tagname>]
+            [--mask-header-upcoming=<mask>] [--mask-header-tag=<mask>] [--mask-commit=<mask>]
+            <type>
 MESSAGE
 }
 
 # version string
 version() {
-    echo "GIT-changelog $SCRIPT_VERSION"
+    echo "${SCRIPT_NAME} ${SCRIPT_VERSION}"
 }
 
 # help string
@@ -69,9 +87,25 @@ help() {
     version
     echo
     usage
+    cat <<MESSAGE
+
+with <type> in:
+        'all'                           get the full repository changes log
+        'init'                          get the full repository initial changes log (no tag is used)
+        'tag1..tag2'                    get the changes log between tag1 and tag2 (tag1 < tag2)
+        'hash'                          get a single commit change log message
+
+available options:
+        --file=<path>                   write the result in a file
+        --tag-ignore=<tagname>          tag to match ignored commits ; default is: '$TAGNAME_IGNORE'
+        --mask-title=<mask>             mask used to build global title ; default is: '$MASK_GLOBAL_TITLE'
+        --mask-header-upcoming=<mask>   mask used to build upcoming release title; default is: '$MASK_HEADER_UPCOMING'
+        --mask-header-tag=<mask>        mask used to build tag title ; default is: '$MASK_HEADER_TAG'
+        --mask-commit=<mask>            mask used to build commit message ; default is: '$MASK_COMMIT_LOG'
+MESSAGE
     echo
-    echo "This is free software under the terms of the MIT license."
-    echo "See <http://github.com/e-picas/git-changelog> for sources & updates."
+    echo "This is free software under the terms of the ${SCRIPT_LICENSE}."
+    echo "See <${SCRIPT_SOURCES}> for sources & updates."
 }
 
 # trim a string
@@ -87,7 +121,7 @@ repo_remote() {
 # tag_title TAG_REF
 tag_title() {
     local TAGREF=$(tag_header "${1}")
-    local tmp=$(git --no-pager for-each-ref --sort='-taggerdate' --format="$TAG_HEADER" 'refs/tags' | grep " ${1} ")
+    local tmp=$(git --no-pager for-each-ref --sort='-taggerdate' --format="$MASK_HEADER_TAG" 'refs/tags' | grep " ${1} ")
     printf "$tmp" "$TAGREF"
 }
 
@@ -98,37 +132,49 @@ tag_header() {
 
 # tag_history TAG1 TAG2
 tag_history() {
+    local history_tmp=''
     if [ $# -eq 2 ]; then
-        if [ -n "$MESSAGE_IGNORE" ]; then
-            git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" "${1}..${2}" | grep -v "$MESSAGE_IGNORE"
-        else
-            git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" "${1}..${2}"
-        fi
+        history_tmp="$(git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$MASK_COMMIT_LOG" "${1}..${2}")"
     elif [ $# -eq 1 ]; then
-        if [ -n "$MESSAGE_IGNORE" ]; then
-            git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" "${1}" | grep -v "$MESSAGE_IGNORE"
+        history_tmp="$(git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$MASK_COMMIT_LOG" "${1}")"
+    fi
+    if [ -n "$TAGNAME_IGNORE" ]; then
+        local res="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE" &>/dev/null; echo $?)"
+        if [ "$res" -gt 0 ]; then
+            return 0
         else
-            git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" "${1}"
+            history_tmp="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE")"
         fi
     fi
+    echo "$history_tmp"
 }
 
 # commit_history HASH
 commit_history() {
-    if [ -n "$MESSAGE_IGNORE" ]; then
-        git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" -1 "${1}" | grep -v "$MESSAGE_IGNORE"
-    else
-        git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$COMMIT_LOG" -1 "${1}"
+    local history_tmp="$(git --no-pager log --oneline --first-parent --no-merges --decorate --pretty=tformat:"$MASK_COMMIT_LOG" -1 "${1}")"
+    if [ -n "$TAGNAME_IGNORE" ]; then
+        local res="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE" &>/dev/null; echo $?)"
+        if [ "$res" -gt 0 ]; then
+            return 0
+        else
+            history_tmp="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE")"
+        fi
     fi
+    echo "$history_tmp"
 }
 
 # get_history
 get_history() {
-    if [ -n "$MESSAGE_IGNORE" ]; then
-        git --no-pager log --oneline --all --decorate --pretty=tformat:"$COMMIT_LOG" | grep -v "$MESSAGE_IGNORE"
-    else
-        git --no-pager log --oneline --all --decorate --pretty=tformat:"$COMMIT_LOG"
+    local history_tmp="$(git --no-pager log --oneline --all --decorate --pretty=tformat:"$MASK_COMMIT_LOG")"
+    if [ -n "$TAGNAME_IGNORE" ]; then
+        local res="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE" &>/dev/null; echo $?)"
+        if [ "$res" -gt 0 ]; then
+            return 0
+        else
+            history_tmp="$(echo "$history_tmp" | grep -v "$TAGNAME_IGNORE")"
+        fi
     fi
+    echo "$history_tmp"
 }
 
 # get_changelog TAG1 TAG2
@@ -143,7 +189,7 @@ get_changelog() {
         return 1
     fi
     if [ "$TAG2" = 'HEAD' ]; then
-        echo "$HEAD_HEADER"
+        echo "$MASK_HEADER_UPCOMING"
     else
         echo "$(tag_title "$TAG2")"
     fi
@@ -156,60 +202,51 @@ get_changelog() {
     echo
 }
 
-# no argument
-if [ $# -eq 0 ]; then
-    usage >&2
-    exit 1
-fi
-
-# -h / --help
-if [[ "$1" =~ ^--?h(elp)?$ ]]; then
-    help
-    exit 0
-fi
-
-# -V / --version
-if [ "$1" = '-V' ]||[ "$1" = '--version' ]; then
-    version
-    exit 0
-fi
-
-# is it a GIT repo?
-if [ ! -e ".git" ]; then
-    error "no GIT repository found in '$(pwd)'"
-fi
-
-# arguments
-ARGS="$1"
-FILENAME="${2:-}"
-
-# get the whole repo history
-if [ "$ARGS" = 'full' ]||[ "$ARGS" = 'all' ]; then
+# action 'init'
+action_init() {
+    verbose_echo "> calling action 'init'"
     REPO=$(repo_remote)
-    if [ -n "$FILENAME" ]; then
-        {   echo "$(printf "$CHANGELOG_TITLE" "$(trim "$REPO")")"
+    if [ -n "$TARGET_FILENAME" ]; then
+        {   echo "$(printf "$MASK_GLOBAL_TITLE" "$(trim "$REPO")")"
             echo
-        } > "$FILENAME"
+            get_history
+        } > "$TARGET_FILENAME"
+        $EDITOR "$TARGET_FILENAME"
     else
-        echo "$(printf "$CHANGELOG_TITLE" "$(trim "$REPO")")"
+        echo "$(printf "$MASK_GLOBAL_TITLE" "$(trim "$REPO")")"
+        echo
+        get_history
+    fi
+}
+
+# action 'full' or 'all'
+action_all() {
+    verbose_echo "> calling action 'all'"
+    REPO=$(repo_remote)
+    if [ -n "$TARGET_FILENAME" ]; then
+        {   echo "$(printf "$MASK_GLOBAL_TITLE" "$(trim "$REPO")")"
+            echo
+        } > "$TARGET_FILENAME"
+    else
+        echo "$(printf "$MASK_GLOBAL_TITLE" "$(trim "$REPO")")"
         echo
     fi
     TAG1=''
     TAG2='HEAD'
     all_tags="$(git for-each-ref --sort='-taggerdate' --format='%(refname)' 'refs/tags')"
     COUNTER=1
-    TAGSCOUNTER=$(echo "$all_tags" | wc -l )
+    TAGSCOUNTER=$(echo "$all_tags" | wc -l)
     echo "$all_tags" | while read tag; do
         TAG1="${tag//refs\/tags\//}"
         if [ -n "$TAG2" ]; then
-            if [ -n "$FILENAME" ]; then
-                get_changelog "$TAG1" "$TAG2" >> "$FILENAME"
+            if [ -n "$TARGET_FILENAME" ]; then
+                get_changelog "$TAG1" "$TAG2" >> "$TARGET_FILENAME"
             else
                 get_changelog "$TAG1" "$TAG2"
             fi
         else
-            if [ -n "$FILENAME" ]; then
-                get_changelog "$TAG1" >> "$FILENAME"
+            if [ -n "$TARGET_FILENAME" ]; then
+                get_changelog "$TAG1" >> "$TARGET_FILENAME"
             else
                 get_changelog "$TAG1"
             fi
@@ -217,53 +254,134 @@ if [ "$ARGS" = 'full' ]||[ "$ARGS" = 'all' ]; then
         TAG2="${tag//refs\/tags\//}"
         COUNTER=$((COUNTER+1))
         if [ "$COUNTER" -eq $((TAGSCOUNTER+1)) ]; then
-            if [ -n "$FILENAME" ]; then
-                get_changelog "$TAG2" >> "$FILENAME"
+            if [ -n "$TARGET_FILENAME" ]; then
+                get_changelog "$TAG2" >> "$TARGET_FILENAME"
             else
                 get_changelog "$TAG2"
             fi
         fi
     done
 
-    if [ -n "$FILENAME" ]; then
-        $EDITOR "$FILENAME"
+    if [ -n "$TARGET_FILENAME" ]; then
+        $EDITOR "$TARGET_FILENAME"
     fi
+}
+
+dev_debug() {
+    version
+    echo
+    echo "## command debug"
+    echo "DEBUG                 : $DEBUG"
+    echo "QUIET                 : $QUIET"
+    echo "VERBOSE               : $VERBOSE"
+    echo "TARGET_FILENAME       : '$TARGET_FILENAME'"
+    echo "TAGNAME_IGNORE        : '$TAGNAME_IGNORE'"
+    echo "MASK_GLOBAL_TITLE     : '$MASK_GLOBAL_TITLE'"
+    echo "MASK_HEADER_UPCOMING  : '$MASK_HEADER_UPCOMING'"
+    echo "MASK_HEADER_TAG       : '$MASK_HEADER_TAG'"
+    echo "MASK_COMMIT_LOG       : '$MASK_COMMIT_LOG'"
+}
+
+# user options
+getoptvers="$(getopt --test > /dev/null; echo $?)"
+if [[ "$getoptvers" -eq 4 ]]; then
+    # GNU enhanced getopt is available
+    CMD_REQ="$(getopt --shell 'bash' --options "${short_opts}-:" --longoptions "$long_opts" --name "$CMD_PROG" -- "$@")"
+else
+    # original getopt is available
+    verbose_echo "> only the old version of the 'getopt' command is available ; use script options with caution"
+    CMD_REQ="$(getopt "shorts" "$@")"
+fi
+[ "${CMD_REQ// /}" = '--' ] && CMD_REQ='';
+[ -n "$CMD_REQ" ] && eval set -- "$CMD_REQ";
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -q | --quiet )      QUIET=true; VERBOSE=false;;
+        -v | --verbose )    VERBOSE=true; QUIET=false;;
+        -x | --debug )      DEBUG=true;;
+        --version )
+            version; exit 0;;
+        --help )
+            help; exit 0;;
+        --file )
+            TARGET_FILENAME="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> result will be written in file '$TARGET_FILENAME'"
+            shift;;
+        --mask-title )
+            MASK_GLOBAL_TITLE="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> mask title over-written as '$MASK_GLOBAL_TITLE'"
+            shift;;
+        --mask-header-upcoming )
+            MASK_HEADER_UPCOMING="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> mask header for upcoming release over-written as '$MASK_HEADER_UPCOMING'"
+            shift;;
+        --mask-header-tag )
+            MASK_HEADER_TAG="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> mask header for tags over-written as '$MASK_HEADER_TAG'"
+            shift;;
+        --mask-commit )
+            MASK_COMMIT_LOG="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> mask for commit messages over-written as '$MASK_COMMIT_LOG'"
+            shift;;
+        --tag-ignore )
+            TAGNAME_IGNORE="$(echo "$2" | cut -d'=' -f2)"
+            verbose_echo "> tag to match ignored commits over-written as '$TAGNAME_IGNORE'"
+            shift;;
+        -- )    shift; break;;
+        * )     error "unknown option '$1'";;
+    esac
+    shift
+done
+
+# is it a GIT repo?
+if [ ! -e ".git" ]; then
+    error "no GIT repository found in '$(pwd)'"
+fi
+
+# no argument
+if [ $# -eq 0 ]; then
+    usage >&2
+    exit 1
+fi
+
+# arguments
+ARG="$1"
+
+# special development action
+if [ "$ARG" = 'debug' ]; then
+    dev_debug;
+
+# get the whole repo history
+elif [ "$ARG" = 'full' ]||[ "$ARG" = 'all' ]; then
+    action_all;
 
 # get initial changelog
-elif [ "$ARGS" = 'init' ]; then
-    REPO=$(repo_remote)
-    if [ -n "$FILENAME" ]; then
-        {   echo "$(printf "$CHANGELOG_TITLE" "$(trim "$REPO")")"
-            echo
-            get_history
-        } > "$FILENAME"
-        $EDITOR "$FILENAME"
-    else
-        echo "$(printf "$CHANGELOG_TITLE" "$(trim "$REPO")")"
-        echo
-        get_history
-    fi
+elif [ "$ARG" = 'init' ]; then
+    action_init;
 
 else
 
-    tag=$(echo "$ARGS" | grep '\.\.')
+    tag=$(echo "$ARG" | grep '\.\.' &>/dev/null; echo $?)
     # get the history between two tags
-    if [ -n "$tag" ]; then
-        tmpargs=$(echo "$ARGS" | sed -e 's/\.\./;/g')
+    if [ "$tag" -eq 0 ]; then
+        verbose_echo "> getting diff between references"
+        tmpargs=$(echo "$ARG" | sed -e 's/\.\./;/g')
         TAG1=$(echo "$tmpargs" | cut -d';' -f 1)
         TAG2=$(echo "$tmpargs" | cut -d';' -f 2)
         get_changelog "$TAG1" "$TAG2"
 
     else
 
-        commit=$(git branch -a --contains="$ARGS" &>/dev/null; echo $?)
+        commit=$(git branch -a --contains="$ARG" &>/dev/null; echo $?)
         # get the history of a single commit
         if [ "$commit" = 0 ]; then
-            commit_history "$ARGS"
+            verbose_echo "> getting commit message"
+            commit_history "$ARG"
 
         else
-            # else error, args not understood
-            error "reference $ARGS not found"
+            # else error, argument not understood
+            error "reference '$ARG' not found"
 
         fi
     fi
