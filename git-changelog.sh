@@ -50,6 +50,14 @@ declare ORIGIN_REMOTE='origin'
 declare MASTER_BRANCH='master'
 declare ALTERNATE_REMOTES='upstream'
 
+# log messages tagnames
+declare -a ADDED_TAGNAMES=( 'added' )
+declare -a DEPRECATED_TAGNAMES=( 'deprecated' )
+declare -a REMOVED_TAGNAMES=( 'remove' 'removed' )
+declare -a FIXED_TAGNAMES=( 'close' 'closes' 'closed' 'fix' 'fixes' 'fixed' 'resolve' 'resolves' 'resolved' )
+declare -a CHANGED_TAGNAMES=( 'change' 'changed' )
+declare -a SECURITY_TAGNAMES=( 'security' )
+
 # throw an error
 error() {
     {   echo "> $1"
@@ -363,6 +371,59 @@ action_list_tags() {
     done
 }
 
+action_devtest() {
+    debug_echo "# all tags:";
+    declare -a all_tags=()
+    oldIFS="$IFS"
+    IFS='
+';
+    for tag_line in $(action_list_tags); do
+        debug_echo "$tag_line"
+        tag="$(echo "$tag_line" | cut -d' ' -f 1)"
+        tag_hash="$(echo "$tag_line" | cut -d' ' -f 2)"
+        tag_remote="$(echo "$tag_line" | cut -d' ' -f 3)"
+        tag_remote_origin="$(echo "$tag_remote" | grep "${BASE_REMOTE}/" || echo '';)"
+        if [ $? -eq 0 ]; then
+            all_tags["${#all_tags[@]}"]="$tag"
+        fi
+    done
+    IFS="$oldIFS"
+
+    debug_echo "# concerned tags:"
+    TAG1=''
+    TAG2=''
+    COUNTER=1
+    TAGSCOUNTER=$(echo "$all_tags" | wc -l )
+    for tag in "${all_tags[@]}"; do
+        debug_echo "> $tag"
+        TAG1="${tag}"
+        if [ "$COUNTER" -eq 1 ]; then
+            debug_echo "$(get_last_commit_hash)"
+            debug_echo "$(get_tag_hash "$TAG1")"
+        fi
+        if [ "$COUNTER" -eq 1 ] && [ "$(get_last_commit_hash)" != "$(get_tag_hash "$TAG1")" ]; then
+            TAG2='HEAD'
+        fi
+        if [ -n "$TAG2" ]; then
+            if [ -n "$TARGET_FILENAME" ]; then
+                get_changelog "$TAG1" "$TAG2" >> "$TARGET_FILENAME"
+            else
+                get_changelog "$TAG1" "$TAG2"
+            fi
+        fi
+        TAG2="${tag}"
+        COUNTER=$((COUNTER+1))
+        if [ "$COUNTER" -eq $((TAGSCOUNTER+1)) ]; then
+            if [ -n "$TARGET_FILENAME" ]; then
+                get_changelog "$TAG2" >> "$TARGET_FILENAME"
+            else
+                get_changelog "$TAG2"
+            fi
+        fi
+    done
+
+}
+
 # special debug action (for development)
 action_debug_env() {
     version
@@ -471,6 +532,10 @@ ARG="$1"
 # special development action
 if [ "$ARG" = 'debug' ]; then
     action_debug_env;
+
+# devtest
+elif [ "$1" = 'devtest' ]; then
+    action_devtest;
 
 # get the list of all tags
 elif [ "$ARG" = 'list-tags' ]; then
